@@ -22,13 +22,13 @@ import hashlib
 import secrets
 
 # ============ 配置 ============
-API_KEY = "sk-geminiluocai1111111111"
+API_KEY = "sk-geminixxxxx"
 HOST = "0.0.0.0"
-PORT = 8222
+PORT = 8000
 CONFIG_FILE = "config_data.json"
 # 后台登录账号密码
-ADMIN_USERNAME = "luocai"
-ADMIN_PASSWORD = "luocai123"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
 # ==============================
 
 app = FastAPI(title="Gemini OpenAI API", version="1.0.0")
