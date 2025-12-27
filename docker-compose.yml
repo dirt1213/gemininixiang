@@ -8,14 +8,14 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
-      - API_KEY=sk-gemini
+      - API_KEY=sk-tczym123
       - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=admin123
+      - ADMIN_PASSWORD=19811213zym
     volumes:
       # 持久化配置文件，以便保存设置的Cookie和Token
-      - ./config_data.json:/app/config_data.json
+      - ./data/config_data.json:/app/config_data.json
       # 持久化日志文件
-      - ./api_logs.json:/app/api_logs.json
+      - ./log/api_logs.json:/app/api_logs.json
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/admin"]
