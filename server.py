@@ -78,18 +78,18 @@ DEFAULT_MODEL_IDS = {
 
 # 配置存储
 _config = {
-    "SNLM0E": "",
-    "SECURE_1PSID": "",
-    "SECURE_1PSIDTS": "",
-    "SAPISID": "",
-    "SID": "",
-    "HSID": "",
-    "SSID": "",
-    "APISID": "",
-    "PUSH_ID": "",
-    "FULL_COOKIE": "",  # 存储完整cookie字符串
-    "MODELS": DEFAULT_MODELS.copy(),  # 可用模型列表
-    "MODEL_IDS": DEFAULT_MODEL_IDS.copy(),  # 模型 ID 映射
+   "SNLMOE": os.environ.get("SNLMOE", ""),
+   "SECURE_1PSID": os.environ.get("SECURE_1PSID", ""),
+   "SECURE_1PSIDS": os.environ.get("SECURE_1PSIDS", ""),
+   "SAPISID: os.environ.get("SAPISID", ""),
+   "SID": os.environ.get("SID", ""),
+   "HSID": os.environ.get("HSID", ""),
+   "SSID": os.environ.get("SSID", ""),
+   "APISID: os.environ.get("APISID", ""),
+   "PUSH_ID: os.environ.get("PUSH_ID", ""),
+   "FULL_COOKIE": os.environ.get("FULL_COOKIE", ""), # 存储完整cookie字符串
+   "MODELS": DEFAULT_MODELS.copy(), # 可用模型列表
+   "MODEL_IDS": DEFAULT_MODEL_IDS.copy() # 模型ID映射
 }
 
 # Cookie 字段映射 (浏览器cookie名 -> 配置字段名)
