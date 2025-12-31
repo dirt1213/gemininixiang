@@ -85,8 +85,8 @@ _config = {
    "SID": os.environ.get("SID", ""),
    "HSID": os.environ.get("HSID", ""),
    "SSID": os.environ.get("SSID", ""),
-   "APISID: os.environ.get("APISID", ""),
-   "PUSH_ID: os.environ.get("PUSH_ID", ""),
+   "APISID": os.environ.get("APISID", ""),
+   "PUSH_ID": os.environ.get("PUSH_ID", ""),
    "FULL_COOKIE": os.environ.get("FULL_COOKIE", ""), # 存储完整cookie字符串
    "MODELS": DEFAULT_MODELS.copy(), # 可用模型列表
    "MODEL_IDS": DEFAULT_MODEL_IDS.copy() # 模型ID映射
