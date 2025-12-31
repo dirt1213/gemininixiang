@@ -81,7 +81,7 @@ _config = {
    "SNLMOE": os.environ.get("SNLMOE", ""),
    "SECURE_1PSID": os.environ.get("SECURE_1PSID", ""),
    "SECURE_1PSIDS": os.environ.get("SECURE_1PSIDS", ""),
-   "SAPISID: os.environ.get("SAPISID", ""),
+   "SAPISID": os.environ.get("SAPISID", ""),
    "SID": os.environ.get("SID", ""),
    "HSID": os.environ.get("HSID", ""),
    "SSID": os.environ.get("SSID", ""),
