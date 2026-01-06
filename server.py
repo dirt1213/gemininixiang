@@ -2,8 +2,8 @@
 Gemini OpenAI 兼容 API 服务
 
 启动: python server.py
-后台: http://localhost:8000/admin
-API:  http://localhost:8000/v1
+后台: https://tczymgemini.zeabur.app/admin
+API:  https://tczymgemini.zeabur.app/v1
 """
 
 from fastapi import FastAPI, HTTPException, Header, Request
