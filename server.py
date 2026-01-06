@@ -395,7 +395,7 @@ def get_client():
         cookies += f"; APISID={_config['APISID']}"
     
     # 构建媒体文件的基础 URL
-    media_base_url = f"http://localhost:{PORT}"
+    media_base_url = f"https://tczymgemini.zeabur.app"
     
     from client import GeminiClient
     _client = GeminiClient(
