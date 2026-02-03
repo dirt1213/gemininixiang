@@ -20,6 +20,7 @@ import re
 import httpx
 import hashlib
 import secrets
+import asyncio
 
 # ============ 配置 ============
 API_KEY = "sk-geminixxxxx"
@@ -29,7 +30,21 @@ CONFIG_FILE = "config_data.json"
 # 后台登录账号密码
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
+# Token 自动刷新配置
+TOKEN_REFRESH_INTERVAL_MIN = 200  # 刷新间隔最小秒数
+TOKEN_REFRESH_INTERVAL_MAX = 300  # 刷新间隔最大秒数
+TOKEN_AUTO_REFRESH = True  # 是否启用自动刷新
+TOKEN_BACKGROUND_REFRESH = True  # 是否启用后台定时刷新（防止长时间不用失效）
+# 媒体文件外网访问地址 (留空则使用 localhost)
+MEDIA_BASE_URL = "http://127.0.0.1:8000"  # 例如: "https://your-domain.com" 或 "http://your-ip:8000"
 # ==============================
+
+import random
+from datetime import datetime
+
+# 后台刷新任务控制
+_background_refresh_task = None
+_background_refresh_stop = False
 
 app = FastAPI(title="Gemini OpenAI API", version="1.0.0")
 
@@ -56,14 +71,21 @@ async def serve_static(filename: str):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="文件不存在")
 
-@app.get("/media/{media_id}")
-async def serve_media(media_id: str):
+@app.get("/media/{media_filename}")
+async def serve_media(media_filename: str):
     """提供缓存的媒体文件"""
-    # 安全检查：只允许字母数字和下划线
-    if not media_id.replace("_", "").replace("-", "").isalnum():
-        raise HTTPException(status_code=400, detail="无效的媒体 ID")
+    # 安全检查：只允许字母数字、下划线、点和常见后缀
+    import re
+    if not re.match(r'^[a-zA-Z0-9_-]+(\.(png|jpg|jpeg|gif|webp|mp4))?$', media_filename):
+        raise HTTPException(status_code=400, detail="无效的媒体文件名")
     
-    # 查找匹配的文件
+    # 直接查找文件（带后缀名）
+    file_path = os.path.join(MEDIA_CACHE_DIR, media_filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    
+    # 兼容旧版本：不带后缀名的请求，尝试查找匹配的文件
+    media_id = media_filename.rsplit('.', 1)[0] if '.' in media_filename else media_filename
     for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4"]:
         file_path = os.path.join(MEDIA_CACHE_DIR, media_id + ext)
         if os.path.exists(file_path):
@@ -253,6 +275,175 @@ def fetch_tokens_from_page(cookies_str: str) -> dict:
         return result
 
 _client = None
+_last_token_refresh = 0  # 上次 token 刷新时间
+_token_refresh_count = 0  # token 刷新次数统计
+
+
+def try_refresh_tokens(force: bool = False) -> dict:
+    """
+    尝试刷新 token
+    
+    Args:
+        force: 是否强制刷新，忽略时间间隔
+        
+    Returns:
+        dict: {"success": bool, "message": str, "snlm0e": str, "push_id": str}
+    """
+    global _client, _last_token_refresh, _token_refresh_count, _config
+    
+    result = {"success": False, "message": "", "snlm0e": "", "push_id": ""}
+    
+    if not TOKEN_AUTO_REFRESH and not force:
+        result["message"] = "自动刷新已禁用"
+        return result
+    
+    current_time = time.time()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 检查是否需要刷新（除非强制刷新）
+    if not force and (current_time - _last_token_refresh) < TOKEN_REFRESH_INTERVAL_MIN:
+        result["message"] = f"距离上次刷新不足 {TOKEN_REFRESH_INTERVAL_MIN} 秒"
+        return result
+    
+    try:
+        # 如果 client 存在，使用 client 的刷新方法
+        if _client is not None:
+            refresh_result = _client.refresh_tokens()
+            if refresh_result["success"]:
+                # 更新配置
+                if refresh_result["snlm0e"]:
+                    _config["SNLM0E"] = refresh_result["snlm0e"]
+                    result["snlm0e"] = refresh_result["snlm0e"]
+                if refresh_result["push_id"]:
+                    _config["PUSH_ID"] = refresh_result["push_id"]
+                    result["push_id"] = refresh_result["push_id"]
+                
+                # 保存配置
+                save_config()
+                
+                _last_token_refresh = current_time
+                _token_refresh_count += 1
+                result["success"] = True
+                result["message"] = f"Token 刷新成功 (第 {_token_refresh_count} 次)"
+                print(f"✅ [{now_str}] Token 自动刷新成功 (第 {_token_refresh_count} 次)")
+            else:
+                result["message"] = refresh_result.get("error", "刷新失败")
+                print(f"⚠️ [{now_str}] Token 刷新失败: {result['message']}")
+        else:
+            # client 不存在，使用 fetch_tokens_from_page
+            cookies = _config.get("FULL_COOKIE", "")
+            if not cookies:
+                cookies = f"__Secure-1PSID={_config.get('SECURE_1PSID', '')}"
+                if _config.get("SECURE_1PSIDTS"):
+                    cookies += f"; __Secure-1PSIDTS={_config['SECURE_1PSIDTS']}"
+            
+            tokens = fetch_tokens_from_page(cookies)
+            if tokens.get("snlm0e"):
+                _config["SNLM0E"] = tokens["snlm0e"]
+                result["snlm0e"] = tokens["snlm0e"]
+            if tokens.get("push_id"):
+                _config["PUSH_ID"] = tokens["push_id"]
+                result["push_id"] = tokens["push_id"]
+            
+            if tokens.get("snlm0e"):
+                save_config()
+                _last_token_refresh = current_time
+                _token_refresh_count += 1
+                result["success"] = True
+                result["message"] = f"Token 刷新成功 (第 {_token_refresh_count} 次)"
+                print(f"✅ [{now_str}] Token 自动刷新成功 (第 {_token_refresh_count} 次)")
+            else:
+                result["message"] = "无法从页面获取新 token"
+        
+        return result
+        
+    except Exception as e:
+        result["message"] = f"刷新异常: {str(e)}"
+        print(f"❌ [{now_str}] Token 刷新异常: {e}")
+        return result
+
+
+def reset_client():
+    """重置 client，下次请求时会重新创建"""
+    global _client
+    _client = None
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"🔄 [{now_str}] Client 已重置，下次请求将重新创建")
+
+
+# ============ 后台定时刷新任务 ============
+def get_current_time_str():
+    """获取当前时间字符串"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_random_refresh_interval():
+    """获取随机刷新间隔"""
+    return random.randint(TOKEN_REFRESH_INTERVAL_MIN, TOKEN_REFRESH_INTERVAL_MAX)
+
+
+async def background_token_refresh():
+    """后台定时刷新 token 任务"""
+    global _background_refresh_stop
+    print(f"🔄 [{get_current_time_str()}] 后台 Token 定时刷新任务已启动")
+    
+    while not _background_refresh_stop:
+        try:
+            # 随机等待间隔
+            interval = get_random_refresh_interval()
+            print(f"⏳ [{get_current_time_str()}] 下次刷新将在 {interval} 秒后")
+            await asyncio.sleep(interval)
+            
+            if _background_refresh_stop:
+                break
+            
+            if not TOKEN_BACKGROUND_REFRESH:
+                continue
+            
+            # 执行刷新
+            print(f"⏰ [{get_current_time_str()}] 后台定时刷新 Token...")
+            result = try_refresh_tokens(force=True)
+            
+            if result["success"]:
+                print(f"✅ [{get_current_time_str()}] 后台刷新成功: {result['message']}")
+            else:
+                print(f"⚠️ [{get_current_time_str()}] 后台刷新失败: {result['message']}")
+                
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"❌ [{get_current_time_str()}] 后台刷新异常: {e}")
+            await asyncio.sleep(60)  # 出错后等待 1 分钟再试
+    
+    print(f"🛑 [{get_current_time_str()}] 后台 Token 定时刷新任务已停止")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时执行"""
+    global _background_refresh_task, _background_refresh_stop
+    
+    load_config()
+    _background_refresh_stop = False
+    
+    if TOKEN_BACKGROUND_REFRESH:
+        _background_refresh_task = asyncio.create_task(background_token_refresh())
+        print(f"✅ [{get_current_time_str()}] 后台 Token 定时刷新已启用 (间隔: {TOKEN_REFRESH_INTERVAL_MIN}-{TOKEN_REFRESH_INTERVAL_MAX} 秒随机)")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时执行"""
+    global _background_refresh_task, _background_refresh_stop
+    
+    _background_refresh_stop = True
+    if _background_refresh_task:
+        _background_refresh_task.cancel()
+        try:
+            await _background_refresh_task
+        except asyncio.CancelledError:
+            pass
+    print("🛑 后台任务已停止")
 
 
 # ============ Tools 支持 ============
@@ -370,11 +561,17 @@ def save_config():
         json.dump(_config, f, indent=2, ensure_ascii=False)
 
 
-def get_client():
-    global _client
+def get_client(auto_refresh: bool = True):
+    global _client, _last_token_refresh
     
     if not _config.get("SNLM0E") or not _config.get("SECURE_1PSID"):
         raise HTTPException(status_code=500, detail="请先在后台配置 Token 和 Cookie")
+    
+    # 检查是否需要自动刷新 token
+    if auto_refresh and TOKEN_AUTO_REFRESH:
+        current_time = time.time()
+        if (current_time - _last_token_refresh) >= TOKEN_REFRESH_INTERVAL_MIN:
+            try_refresh_tokens()
     
     # 如果 client 已存在，直接复用，保持会话上下文
     if _client is not None:
@@ -394,8 +591,8 @@ def get_client():
     if _config.get("APISID"):
         cookies += f"; APISID={_config['APISID']}"
     
-    # 构建媒体文件的基础 URL
-    media_base_url = f"http://localhost:{PORT}"
+    # 构建媒体文件的基础 URL (优先使用配置的外网地址)
+    media_base_url = MEDIA_BASE_URL if MEDIA_BASE_URL else f"http://localhost:{PORT}"
     
     from client import GeminiClient
     _client = GeminiClient(
@@ -510,7 +707,11 @@ def get_admin_html():
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; }
-        .card { background: white; border-radius: 16px; padding: 30px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+        .card { background: white; border-radius: 16px; padding: 30px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); position: relative; }
+        .token-status { position: absolute; top: 15px; left: 20px; font-size: 12px; padding: 6px 12px; border-radius: 20px; font-weight: 500; }
+        .token-status.valid { background: #d4edda; color: #155724; }
+        .token-status.invalid { background: #f8d7da; color: #721c24; }
+        .token-status.loading { background: #fff3cd; color: #856404; }
         h1 { color: #333; margin-bottom: 10px; font-size: 28px; }
         .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
         .section { margin-bottom: 25px; }
@@ -542,6 +743,7 @@ def get_admin_html():
 <body>
     <div class="container">
         <div class="card">
+            <div id="tokenStatus" class="token-status loading">🔄 检查中...</div>
             <h1>🤖 Gemini API 配置</h1>
             <p class="subtitle">配置 Google Gemini 的认证信息，保存后即可调用 API <a href="/admin/logout" style="float:right;color:#667eea;text-decoration:none;">退出登录</a></p>
             
@@ -681,6 +883,32 @@ for chunk in stream:
         document.getElementById('codeKey').textContent = API_KEY;
         document.getElementById('codeUrl2').textContent = 'http://localhost:' + PORT + '/v1';
         document.getElementById('codeKey2').textContent = API_KEY;
+        
+        // 获取并显示 Token 状态
+        async function updateTokenStatus() {
+            const statusEl = document.getElementById('tokenStatus');
+            try {
+                const resp = await fetch('/v1/token/status', {
+                    headers: { 'Authorization': 'Bearer ' + API_KEY }
+                });
+                const data = await resp.json();
+                
+                if (data.has_snlm0e && data.total_refresh_count >= 0) {
+                    statusEl.className = 'token-status valid';
+                    statusEl.innerHTML = '✅ Token 有效 | 已刷新 ' + data.total_refresh_count + ' 次';
+                } else {
+                    statusEl.className = 'token-status invalid';
+                    statusEl.innerHTML = '❌ Token 已失效';
+                }
+            } catch (e) {
+                statusEl.className = 'token-status invalid';
+                statusEl.innerHTML = '❌ 无法获取状态';
+            }
+        }
+        
+        // 页面加载时获取状态，并每 30 秒刷新一次
+        updateTokenStatus();
+        setInterval(updateTokenStatus, 30000);
         
         // 解析模型 ID (从 x-goog-ext-525001261-jspb 数组中提取)
         function parseModelId(input) {
@@ -1086,6 +1314,47 @@ async def list_models(authorization: str = Header(None)):
     }
 
 
+@app.post("/v1/token/refresh")
+async def refresh_token_api(authorization: str = Header(None)):
+    """手动刷新 token API"""
+    verify_api_key(authorization)
+    result = try_refresh_tokens(force=True)
+    return {
+        "success": result["success"],
+        "message": result["message"],
+        "snlm0e_updated": bool(result.get("snlm0e")),
+        "push_id_updated": bool(result.get("push_id")),
+        "refresh_count": _token_refresh_count,
+    }
+
+
+@app.get("/v1/token/status")
+async def token_status_api(authorization: str = Header(None)):
+    """查看 token 状态 API"""
+    verify_api_key(authorization)
+    current_time = time.time()
+    time_since_refresh = int(current_time - _last_token_refresh) if _last_token_refresh > 0 else -1
+    
+    return {
+        "auto_refresh_enabled": TOKEN_AUTO_REFRESH,
+        "background_refresh_enabled": TOKEN_BACKGROUND_REFRESH,
+        "refresh_interval_range": f"{TOKEN_REFRESH_INTERVAL_MIN}-{TOKEN_REFRESH_INTERVAL_MAX}",
+        "last_refresh_seconds_ago": time_since_refresh,
+        "total_refresh_count": _token_refresh_count,
+        "has_snlm0e": bool(_config.get("SNLM0E")),
+        "has_push_id": bool(_config.get("PUSH_ID")),
+        "client_active": _client is not None,
+    }
+
+
+@app.post("/v1/client/reset")
+async def reset_client_api(authorization: str = Header(None)):
+    """重置 client API，用于 token 更新后强制重新创建 client"""
+    verify_api_key(authorization)
+    reset_client()
+    return {"success": True, "message": "Client 已重置，下次请求将使用新配置"}
+
+
 def log_api_call(request_data: dict, response_data: dict, error: str = None):
     """记录 API 调用日志到文件"""
     import datetime
@@ -1161,24 +1430,41 @@ async def chat_completions(request: ChatCompletionRequest, authorization: str = 
         "messages": [],
         "tools": [t.model_dump() for t in request.tools] if request.tools else None
     }
+    image_count = 0
     for m in request.messages:
         msg_log = {"role": m.role}
         if isinstance(m.content, list):
             content_log = []
             for item in m.content:
                 if item.get("type") == "image_url":
+                    image_count += 1
                     img_url = item.get("image_url", {})
                     if isinstance(img_url, dict):
                         url = img_url.get("url", "")
                     else:
                         url = str(img_url)
-                    content_log.append({"type": "image_url", "url_preview": url[:100] + "..." if len(url) > 100 else url})
+                    # 判断图片格式
+                    if url.startswith("data:"):
+                        img_format = "base64"
+                    elif url.startswith("http://") or url.startswith("https://"):
+                        img_format = "url"
+                    else:
+                        img_format = "unknown"
+                    content_log.append({
+                        "type": "image_url", 
+                        "format": img_format,
+                        "url_preview": url[:100] + "..." if len(url) > 100 else url
+                    })
                 else:
                     content_log.append(item)
             msg_log["content"] = content_log
         else:
             msg_log["content"] = m.content
         request_log["messages"].append(msg_log)
+    
+    # 打印图片接收情况
+    if image_count > 0:
+        print(f"📷 收到 {image_count} 张图片")
     
     try:
         client = get_client()
@@ -1319,6 +1605,24 @@ async def chat_completions(request: ChatCompletionRequest, authorization: str = 
     except Exception as e:
         import traceback
         error_msg = str(e)
+        
+        # 检测是否是 token 过期错误
+        is_token_error = any(keyword in error_msg.lower() for keyword in [
+            'cookie', 'expired', '过期', '401', '403', 'unauthorized', 
+            'push_id', 'snlm0e', 'upload_id', '认证失败'
+        ])
+        
+        if is_token_error:
+            print(f"[WARN] 检测到 token 可能过期，尝试自动刷新...")
+            refresh_result = try_refresh_tokens(force=True)
+            
+            if refresh_result["success"]:
+                # 刷新成功，重置 client 并提示用户重试
+                reset_client()
+                error_msg = f"Token 已自动刷新，请重试请求。原错误: {error_msg}"
+            else:
+                error_msg = f"Token 刷新失败 ({refresh_result['message']})，请手动更新 Cookie。原错误: {error_msg}"
+        
         print(f"[ERROR] Chat error: {error_msg}")
         traceback.print_exc()
         log_api_call(request_log, None, error=error_msg)
@@ -1334,6 +1638,7 @@ async def reset_context(authorization: str = Header(None)):
     return {"status": "ok"}
 
 
+# 注意: load_config() 已在 startup_event 中调用，这里保留是为了兼容直接导入模块的情况
 load_config()
 
 if __name__ == "__main__":
@@ -1344,6 +1649,7 @@ if __name__ == "__main__":
 ║  后台配置: http://localhost:{PORT}/admin                   ║
 ║  API 地址: http://localhost:{PORT}/v1                      ║
 ║  API Key:  {API_KEY}                                     ║
+║  Token 自动刷新: {"开启" if TOKEN_BACKGROUND_REFRESH else "关闭"} ({TOKEN_REFRESH_INTERVAL_MIN}-{TOKEN_REFRESH_INTERVAL_MAX}秒随机)  ║
 ╚══════════════════════════════════════════════════════════╝
 """)
     uvicorn.run(app, host=HOST, port=PORT)

@@ -210,6 +210,104 @@ class GeminiClient:
             if self.debug:
                 print(f"[DEBUG] 获取 BL 失败，使用默认值: {e}")
 
+    def refresh_tokens(self) -> dict:
+        """
+        刷新 token (SNlM0e 和 push_id)
+        
+        Returns:
+            dict: {"success": bool, "snlm0e": str, "push_id": str, "error": str}
+        """
+        result = {"success": False, "snlm0e": "", "push_id": "", "error": ""}
+        
+        try:
+            if self.debug:
+                print("[DEBUG] 开始刷新 token...")
+            
+            # 访问 Gemini 首页刷新 session
+            resp = self.session.get(self.BASE_URL)
+            
+            if resp.status_code != 200:
+                result["error"] = f"访问 Gemini 失败: HTTP {resp.status_code}"
+                return result
+            
+            html = resp.text
+            
+            # 提取新的 SNlM0e
+            snlm0e_patterns = [
+                r'"SNlM0e":"([^"]+)"',
+                r'SNlM0e["\s:]+["\']([^"\']+)["\']',
+                r'"at":"([^"]+)"',
+            ]
+            new_snlm0e = ""
+            for pattern in snlm0e_patterns:
+                match = re.search(pattern, html)
+                if match:
+                    new_snlm0e = match.group(1)
+                    break
+            
+            if new_snlm0e:
+                self.snlm0e = new_snlm0e
+                result["snlm0e"] = new_snlm0e
+                if self.debug:
+                    print(f"[DEBUG] SNlM0e 已刷新: {new_snlm0e[:30]}...")
+            
+            # 提取新的 push_id
+            push_id_patterns = [
+                r'"push[_-]?id["\s:]+["\'](feeds/[a-z0-9]+)["\']',
+                r'push[_-]?id["\s:=]+["\'](feeds/[a-z0-9]+)["\']',
+                r'feedName["\s:]+["\'](feeds/[a-z0-9]+)["\']',
+                r'clientId["\s:]+["\'](feeds/[a-z0-9]+)["\']',
+                r'(feeds/[a-z0-9]{14,})',
+            ]
+            new_push_id = ""
+            for pattern in push_id_patterns:
+                matches = re.findall(pattern, html, re.IGNORECASE)
+                if matches:
+                    new_push_id = matches[0]
+                    break
+            
+            if new_push_id:
+                self.push_id = new_push_id
+                result["push_id"] = new_push_id
+                if self.debug:
+                    print(f"[DEBUG] push_id 已刷新: {new_push_id}")
+            
+            # 同时刷新 BL
+            match = re.search(r'"cfb2h":"([^"]+)"', html)
+            if match:
+                self.bl = match.group(1)
+            
+            result["success"] = bool(new_snlm0e)
+            if not new_snlm0e:
+                result["error"] = "无法从页面提取 SNlM0e，Cookie 可能已完全失效"
+            
+            return result
+            
+        except Exception as e:
+            result["error"] = f"刷新 token 失败: {str(e)}"
+            if self.debug:
+                print(f"[DEBUG] 刷新失败: {e}")
+            return result
+
+    def check_token_valid(self) -> bool:
+        """
+        检查当前 token 是否有效
+        
+        Returns:
+            bool: True 表示有效，False 表示需要刷新
+        """
+        try:
+            resp = self.session.get(self.BASE_URL, timeout=10.0)
+            if resp.status_code != 200:
+                return False
+            
+            # 检查页面是否包含登录状态标识
+            if 'SNlM0e' not in resp.text:
+                return False
+            
+            return True
+        except Exception:
+            return False
 
     
     def _parse_content(self, content: Union[str, List[Dict]]) -> tuple:
@@ -242,10 +340,17 @@ class GeminiClient:
                 elif url.startswith("http://") or url.startswith("https://"):
                     # URL 格式，下载图片
                     try:
-                        resp = httpx.get(url, timeout=30)
+                        if self.debug:
+                            print(f"[DEBUG] 尝试下载图片 URL: {url[:100]}...")
+                        resp = httpx.get(url, timeout=30, follow_redirects=True)
                         if resp.status_code == 200:
                             mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
                             images.append({"mime_type": mime, "data": base64.b64encode(resp.content).decode()})
+                            if self.debug:
+                                print(f"[DEBUG] 图片下载成功: {len(resp.content)} bytes, mime: {mime}")
+                        else:
+                            if self.debug:
+                                print(f"[DEBUG] 图片下载失败: HTTP {resp.status_code}")
                     except Exception as e:
                         if self.debug:
                             print(f"[DEBUG] 下载图片失败: {e}")
@@ -255,8 +360,11 @@ class GeminiClient:
                         # 尝试解码验证是否是有效 base64
                         base64.b64decode(url[:100])  # 只验证前100字符
                         images.append({"mime_type": "image/png", "data": url})
+                        if self.debug:
+                            print(f"[DEBUG] 检测到纯 base64 图片数据")
                     except:
-                        pass
+                        if self.debug:
+                            print(f"[DEBUG] 无法识别的图片格式: {url[:50]}...")
         
         return " ".join(text_parts) if text_parts else "", images
     
@@ -443,14 +551,14 @@ class GeminiClient:
         resp_id = self.response_id or ""
         choice_id = self.choice_id or ""
         
-        # 处理图片数据 - 格式: [[[path, 1, null, mime_type], filename]]
+        # 处理图片数据 - 格式: [[[path, 1, null, mime_type], filename], ...]
         image_data = None
         if image_paths and len(image_paths) > 0:
-            path = image_paths[0]
-            mime_type = images[0]["mime_type"] if images else "image/png"
-            filename = f"image_{random.randint(100000, 999999)}.png"
-            # 构建图片数组结构
-            image_data = [[[path, 1, None, mime_type], filename]]
+            image_data = []
+            for i, path in enumerate(image_paths):
+                mime_type = images[i]["mime_type"] if images and i < len(images) else "image/png"
+                filename = f"image_{random.randint(100000, 999999)}.png"
+                image_data.append([[path, 1, None, mime_type], filename])
         
         # 生成唯一会话 ID
         session_id = str(uuid.uuid4()).upper()
@@ -872,8 +980,8 @@ class GeminiClient:
             if self.debug:
                 print(f"[DEBUG] 媒体已保存: {file_path}")
             
-            # 返回完整的媒体访问 URL
-            media_path = f"/media/{media_id}"
+            # 返回完整的媒体访问 URL (包含后缀名)
+            media_path = f"/media/{media_id}{ext}"
             if self.media_base_url:
                 return f"{self.media_base_url}{media_path}"
             return media_path
