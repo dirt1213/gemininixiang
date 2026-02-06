@@ -2,8 +2,8 @@
 Gemini OpenAI 兼容 API 服务
 
 启动: python server.py
-后台: http://localhost:8000/admin
-API:  http://localhost:8000/v1
+后台: http://localhost:8080/admin
+API:  http://localhost:8080/v1
 """
 
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -25,11 +25,11 @@ import asyncio
 # ============ 配置 ============
 API_KEY = "sk-geminixxxxx"
 HOST = "0.0.0.0"
-PORT = 8000
+PORT = 8080
 CONFIG_FILE = "config_data.json"
 # 后台登录账号密码
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
+ADMIN_PASSWORD = "19811213zym"
 # Token 自动刷新配置
 TOKEN_REFRESH_INTERVAL_MIN = 200  # 刷新间隔最小秒数
 TOKEN_REFRESH_INTERVAL_MAX = 300  # 刷新间隔最大秒数
