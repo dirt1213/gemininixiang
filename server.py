@@ -23,7 +23,7 @@ import secrets
 import asyncio
 
 # ============ 配置 ============
-API_KEY = "sk-geminixxxxx"
+API_KEY = "sk-tczym123"
 HOST = "0.0.0.0"
 PORT = 8080
 CONFIG_FILE = "config_data.json"
