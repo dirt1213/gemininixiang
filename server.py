@@ -2,8 +2,8 @@
 Gemini OpenAI 兼容 API 服务
 
 启动: python server.py
-后台: http://localhost:8080/admin
-API:  http://localhost:8080/v1
+后台: https://tczymgemini.zeabur.app/admin
+API:  https://tczymgemini.zeabur.app/v1
 """
 
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -36,7 +36,7 @@ TOKEN_REFRESH_INTERVAL_MAX = 300  # 刷新间隔最大秒数
 TOKEN_AUTO_REFRESH = True  # 是否启用自动刷新
 TOKEN_BACKGROUND_REFRESH = True  # 是否启用后台定时刷新（防止长时间不用失效）
 # 媒体文件外网访问地址 (留空则使用 localhost)
-MEDIA_BASE_URL = "http://127.0.0.1:8000"  # 例如: "https://your-domain.com" 或 "http://your-ip:8000"
+MEDIA_BASE_URL = "https://tczymgemini.zeabur.app"  # 例如: "https://your-domain.com" 或 "http://your-ip:8000"
 # ==============================
 
 import random
